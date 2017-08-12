@@ -10,15 +10,10 @@
 #include "Eigen-3.3/Eigen/Core"
 #include "Eigen-3.3/Eigen/QR"
 #include "spline.h"
+#include "util.h"
 
 using namespace std;
 using spline = tk::spline;
-
-inline double sqr(double x) { return x*x; }
-
-inline double distance(double x1, double y1, double x2, double y2) {
-  return sqrt(sqr(x2-x1) + sqr(y2-y1));
-}
 
 template <typename T> inline T sum(const vector<T> &a){
   T accum = 0;
@@ -30,7 +25,7 @@ class map_wp {
 public:
 
   vector<double> x, y, s, dx, dy, bearing;
-  double center_x, center_y, initial_bearing;
+  double center_x, center_y, initial_bearing, total_length;
   int n;
 
   // the widthe of the lane
@@ -58,6 +53,8 @@ public:
     // normalize bearings with respect to the first way point
     // so that the bearings are sorted
     initial_bearing = bearing[0];
+
+    total_length = s.back() + distance(x[0], y[0], x.back(), y.back());
 
     for(double &alpha: bearing) alpha = normalized_bearing(alpha);
   }
@@ -116,7 +113,7 @@ public:
     return j;
   }
 
-  int next_wp(double px, double py, double yaw) {
+  int next_wp(double px, double py) {
     int wp = nearest_wp(px, py);
 
     // the second nearest point can be either wp+1 or wp-1
@@ -140,9 +137,9 @@ public:
     return wp;
   }
 
-  void frenet(double px, double py, double theta, double &ps, double &pd){
+  void frenet(double px, double py, double &ps, double &pd, double &heading){
     // index of the two nearest way points
-    int idx_a = next_wp(px,py,theta);
+    int idx_a = next_wp(px,py);
     int idx_b = dec_wp(idx_a);
 
     // coordinate of the two nearest way points A, B and the car P = (px,py)
@@ -179,12 +176,13 @@ public:
     // to determine if the point is inside or outside of the lane (negative or postive d)
     // compare the distance to the center of the car and of the projection
     if((center-P).norm() < (center-projection).norm()) pd *= -1;
+
+    heading = atan2(segment_direction(1), segment_direction(0));
   }
 
 
   void cartesian(double ps, double pd, double &px, double &py) {
-    double map_length = s[n-1] + distance(x[0],y[0],x[n-1],y[n-1]);
-    ps = fmod(ps, map_length);
+    ps = fmod(ps+total_length, total_length);
 
     // find the segment somewhat contain the point
     // by searching for the first s that exceeds ps
@@ -234,9 +232,8 @@ public:
 
   }
 
-  void smooth_cartersian(double ps, double pd, double &px, double &py) {
-    double map_length = s[n-1] + distance(x[0],y[0],x[n-1],y[n-1]);
-    ps = fmod(ps, map_length);
+  void smooth_cartersian(double ps, double pd, double &px, double &py, double &heading) {
+    ps = fmod(ps+total_length, total_length);
 
     // find a point close enougth to the car
     int j = (upper_bound(s.begin(), s.end(), ps) - s.begin())%n; 
@@ -244,13 +241,24 @@ public:
     // we will use 5 way points before j and 5 way points after j 
     // for spline interpolation
     j-=5;
-    if(j<0) j+=n;
+
+    // The last point and the first point of the loop are supposed
+    // to be continously linked, but in terms of s, it is discontionous
+    // thus, whenever crossing the two ends of the loop we need to adjust s
+    // to offset for the length of the loop
+    double close_the_loop = 0.0;
+
+    if(j<0){
+      close_the_loop -= total_length;
+      j+=n;
+    }
 
     vector<double> local_x, local_y, local_s;
-    for(int i=0; i<10; i++, j=inc_wp(j)){
+    for(int i=0; i<=10; i++, j=inc_wp(j)){
       local_x.push_back(x[j]);
       local_y.push_back(y[j]);
-      local_s.push_back(s[j]);
+      local_s.push_back(s[j] + close_the_loop);
+      if(j==n-1) close_the_loop += total_length;
     }
 
     // fitting 2D splines
@@ -265,7 +273,10 @@ public:
     // aka, tangent = (dspline_x/ds, dspline_y/ds)
     // the normal vector is perpendicular to the tangent vector
     // thus normal = (-dspline_y/ds, dspline_x/ds)
-    Eigen::Vector2d normal(-spline_y.deriv(1,ps), spline_x.deriv(1,ps));
+    double dx = spline_x.deriv(1,ps), dy = spline_y.deriv(1,ps);
+    heading = atan2(dy,dx);
+    
+    Eigen::Vector2d normal(-dy,dx);
 
     // normalize the normal vector
     normal /= normal.norm();
