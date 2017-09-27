@@ -9,6 +9,7 @@
 #include <vector>
 #include "Eigen-3.3/Eigen/Core"
 #include "Eigen-3.3/Eigen/QR"
+#include "Eigen-3.3/Eigen/Dense"
 #include "spline.h"
 #include "util.h"
 
@@ -31,7 +32,7 @@ public:
   // the widthe of the lane
   static constexpr double lane_width = 4; 
 
-  double normalized_bearing(double alpha){
+  double normalized_bearing(double alpha) const {
     alpha -= initial_bearing;
     while(alpha < 0) alpha += 2*M_PI;
     while(alpha > 2*M_PI) alpha -= 2*M_PI;
@@ -60,8 +61,8 @@ public:
   }
 
   // increase and decrease wp index, wrapping around at the end/start
-  inline int inc_wp(int j){ return j==n-1? 0: j+1;}
-  inline int dec_wp(int j){ return j==0? n-1: j-1;}
+  inline int inc_wp(int j) const { return j==n-1? 0: j+1;}
+  inline int dec_wp(int j) const { return j==0? n-1: j-1;}
 
 
   map_wp(string map_file): x(), y(), s(), dx(), dy(), bearing(){
@@ -82,13 +83,13 @@ public:
 
   // find the coordinate of the point in the center of each of the 6 lanes
   // that corresponds to the wp-th way point
-  void lane_wp(int wp, int lane_id, double &wp_x, double &wp_y) {
+  void lane_wp(int wp, int lane_id, double &wp_x, double &wp_y) const {
     double dist_to_center = lane_id*lane_width + lane_width/2;
     wp_x = x[wp] + dist_to_center*dx[wp];
     wp_y = y[wp] + dist_to_center*dy[wp];
   }
 
-  int nearest_wp(double px, double py) {
+  int nearest_wp(double px, double py) const {
     double alpha = normalized_bearing(atan2(py-center_y, px-center_x));
 
     // find the fist bearing that is greater than alpha 
@@ -113,7 +114,7 @@ public:
     return j;
   }
 
-  int next_wp(double px, double py) {
+  int next_wp(double px, double py) const {
     int wp = nearest_wp(px, py);
 
     // the second nearest point can be either wp+1 or wp-1
@@ -137,7 +138,7 @@ public:
     return wp;
   }
 
-  void frenet(double px, double py, double &ps, double &pd, double &heading){
+  void frenet(double px, double py, double &ps, double &pd, double &heading) const {
     // index of the two nearest way points
     int idx_a = next_wp(px,py);
     int idx_b = dec_wp(idx_a);
@@ -181,7 +182,7 @@ public:
   }
 
 
-  void cartesian(double ps, double pd, double &px, double &py) {
+  void cartersian(double ps, double pd, double &px, double &py) const {
     ps = fmod(ps+total_length, total_length);
 
     // find the segment somewhat contain the point
@@ -232,7 +233,7 @@ public:
 
   }
 
-  void smooth_cartersian(double ps, double pd, double &px, double &py, double &heading) {
+  void smooth_cartersian(double ps, double pd, double &px, double &py, double &heading) const {
     ps = fmod(ps+total_length, total_length);
 
     // find a point close enougth to the car
@@ -241,30 +242,31 @@ public:
     // we will use 5 way points before j and 5 way points after j 
     // for spline interpolation
     j-=5;
+    if(j<0) j+=n;
 
     // The last point and the first point of the loop are supposed
     // to be continously linked, but in terms of s, it is discontionous
     // thus, whenever crossing the two ends of the loop we need to adjust s
     // to offset for the length of the loop
-    double close_the_loop = 0.0;
-
-    if(j<0){
-      close_the_loop -= total_length;
-      j+=n;
-    }
-
     vector<double> local_x, local_y, local_s;
     for(int i=0; i<=10; i++, j=inc_wp(j)){
       local_x.push_back(x[j]);
       local_y.push_back(y[j]);
-      local_s.push_back(s[j] + close_the_loop);
-      if(j==n-1) close_the_loop += total_length;
+      local_s.push_back(s[j]);
+      if(i>0 && local_s[i] < local_s[i-1]) {
+        local_s[i] += total_length;
+      }
     }
+
+    printf("Planned s: \n");
+    for(size_t i=0; i<local_s.size(); i++) printf("%7.2f ", local_s[i]);
 
     // fitting 2D splines
     spline spline_x, spline_y;
     spline_x.set_points(local_s, local_x);
     spline_y.set_points(local_s, local_y);
+
+    if(ps < local_s[0]) ps += total_length;
 
     // interpolate to obtain the feet of the projection of car onto lane
     Eigen::Vector2d projection(spline_x(ps), spline_y(ps));
@@ -275,7 +277,7 @@ public:
     // thus normal = (-dspline_y/ds, dspline_x/ds)
     double dx = spline_x.deriv(1,ps), dy = spline_y.deriv(1,ps);
     heading = atan2(dy,dx);
-    
+
     Eigen::Vector2d normal(-dy,dx);
 
     // normalize the normal vector
@@ -293,6 +295,12 @@ public:
     else P = P2;
 
     px = P(0); py = P(1);
+  }
+
+  void standardize(double ref_s, double &s) const {
+    s = fmod(s, total_length);
+    if(s > ref_s + total_length/2) s -= total_length;
+    if(s < ref_s - total_length/2) s += total_length;
   }
 };
 
