@@ -48,6 +48,8 @@ int main() {
   map_wp Map(map_file_);
   BehaviorPlanner bplanner;
   TrajectoryPlanner tplanner;
+
+  // State of the car, persistent across multiple planning iterations
   State state_x, state_y;
 
   double timestamp = 0, target_v=0;
@@ -83,8 +85,11 @@ int main() {
         	double car_d = j[1]["d"];
         	double car_yaw = j[1]["yaw"];
         	double car_speed = j[1]["speed"];
+
+          // convert from mph to m/s
           car_speed *= 0.44704;
 
+          // update the states of the car
           state_x.update(car_x);
           state_y.update(car_y);
 
@@ -93,11 +98,7 @@ int main() {
 
           double heading = 0, x, y;
 
-          int check_point = 0;
-
-          printf("check 1\n");
           Map.smooth_cartersian(car_s, car_d, x, y, heading);
-          printf("check 2\n");
 
         	// Previous path data given to the Planner
         	auto previous_path_x = j[1]["previous_path_x"];
@@ -111,6 +112,8 @@ int main() {
           timestamp += dt;
 
           int path_size = previous_path_x.size();
+
+          // To avoid over-dependence on previous path, I will use only 10 points from the previous path
           if(path_size > 10) path_size=10;
 
         	// Sensor Fusion Data, a list of all other cars on the same side of the road.
@@ -129,8 +132,9 @@ int main() {
             pre_y.push_back(previous_path_y[i]);
           }
 
-          printf("Car @(%7.2f,%7.2f), s=%7.2f, speed = %7.2f\n", car_x, car_y, car_s, car_speed);
 
+          // Report car position and previous path information
+          printf("Car @(%7.2f,%7.2f), s=%7.2f, speed = %7.2f\n", car_x, car_y, car_s, car_speed);
           printf("receive path: \n");
           for(int i=0; i<pre_x.size(); i++){
             if(i>0){  
@@ -142,23 +146,22 @@ int main() {
             }
           }
 
+          // If no previous, use the car car position to indicate the starting point of the future path
           if(path_size < 1){
             path_size = 1;
             pre_x.push_back(car_x);
             pre_y.push_back(car_y);
           }
 
-          double lane_width = 4;
-          int car_lane = int(floor(car_d/lane_width));
-          int best_lane = bplanner.choose_lane(car_lane, car_s, vehicles, Map);
+          // call behaviour planner to choose the best lane
+          int best_lane = bplanner.choose_lane(car_d, car_s, vehicles, Map);
 
 
-        	json msgJson;
-
+          // call the trajectory planner to find a trajectory towards the best lane
           pair<vectord, vectord> next_path = tplanner.generate_trajectory(best_lane, state_x, state_y, pre_x, pre_y, vehicles, Map);
 
 
-        	// TODO: define a path made up of (x,y) points that the car will visit sequentially every .02 seconds
+          json msgJson;
         	msgJson["next_x"] = next_path.first;
         	msgJson["next_y"] = next_path.second;
 
