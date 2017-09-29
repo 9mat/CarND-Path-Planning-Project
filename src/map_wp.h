@@ -258,9 +258,6 @@ public:
       }
     }
 
-    printf("Planned s: \n");
-    for(size_t i=0; i<local_s.size(); i++) printf("%7.2f ", local_s[i]);
-
     // fitting 2D splines
     spline spline_x, spline_y;
     spline_x.set_points(local_s, local_x);

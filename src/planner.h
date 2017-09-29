@@ -22,6 +22,14 @@ public:
   static constexpr double weight_distance = 1/100;
   static constexpr double weight_speed = 1/100;
 
+  int target_lane;
+  int change_lane_count_down;
+
+  BehaviorPlanner() {
+    target_lane = 1;
+    change_lane_count_down = 0;
+  }
+
   enum ACTION {LANE_KEEP, LANE_CHANGE_LEFT, LANE_CHANGE_RIGHT};
 
   double lane_cost(bool same_lane, double pos_s, const vector<vectord> &vehicles, const map_wp &Map) const {
@@ -50,7 +58,6 @@ public:
     double nearest_behind_speed = has_vehicle_behind ? sqrt(sqr(nearest_behind_veh[3]) + sqr(nearest_behind_veh[4])) : 0;
 
     double cost = -nearest_front_dist*nearest_front_speed;
-    if(same_lane) cost *= 1.1;
 
     printf("  frnt: dist = %7.2e, speed = %7.2e\n", nearest_front_dist, nearest_front_speed);
     printf("  back: dist = %7.2e, speed = %7.2e\n", nearest_behind_dist, nearest_behind_speed);
@@ -64,7 +71,12 @@ public:
     return cost;
   }
 
-  int choose_lane(int cur_lane, double pos_s, const vector<vectord> &vehicles, const map_wp &Map) const {
+  int choose_lane(int cur_lane, double pos_s, const vector<vectord> &vehicles, const map_wp &Map) {
+    if(change_lane_count_down > 0) {
+      change_lane_count_down--;
+      return target_lane;
+    }
+
     vector< vector<vectord> > vehicles_in_lane(3, vector<vectord>());
 
     int check_point = 0;
@@ -78,19 +90,47 @@ public:
     double min_cost = 1e300;
     int best_lane = cur_lane;
 
-    for(int i=0; i<=2; i++){
-      printf("Consider lane %d...\n", i);
-      double cost = lane_cost(i==cur_lane, pos_s, vehicles_in_lane[i], Map);
-      
-      if(i==1) cost*=1.05;
+    vectord discount(3);
+    discount[1] = 0.1;
+    discount[cur_lane] = 0.2;
 
-      if(abs(i-cur_lane)<=1 && cost < min_cost){
-        min_cost = cost;
+    vectord cost(3);
+    for(int i=0; i<=2; i++) {
+      cost[i] = lane_cost(i==cur_lane, pos_s, vehicles_in_lane[i], Map);
+      cost[i] -= discount[i]*abs(cost[i]);
+
+      printf("Cost lane %d = %7.2e\n", i, cost[i]);
+      if(min_cost > cost[i]) {
+        min_cost = cost[i];
+        best_lane = i;
+      }
+    }
+
+
+    if(abs(best_lane - cur_lane) <= 1) return best_lane;
+
+    int temp_lane = cur_lane + (best_lane > cur_lane? 1: -1);
+
+    if(cost[temp_lane]<5e99){
+      cost[temp_lane] = (min_cost*2 + cost[temp_lane])/3;
+    }
+
+    min_cost = cost[cur_lane];
+    best_lane = cur_lane;
+
+    for(int i=0; i<=2; i++) {
+      if(abs(i-cur_lane)<=1 && cost[i] < min_cost) {
+        min_cost = cost[i];
         best_lane = i;
       }
     }
 
     printf("*** Best lane: %d, cost = %7.2e\n", best_lane, min_cost);
+
+    if(best_lane != target_lane) {
+      change_lane_count_down = 50;
+      target_lane = best_lane;
+    }
 
     return best_lane;
     // return 1;
@@ -105,7 +145,7 @@ public:
   static constexpr double spline_knot_spacing = 5;
 
   pair<vectord, vectord> generate_trajectory(int lane, State state_x, State state_y, const vectord &pre_x, const vectord &pre_y, const vector<vectord> &vehicles, const map_wp &Map) {
-    int path_size = min(int(pre_x.size()), 10);
+    int path_size = min(int(pre_x.size()), 20);
 
     vectord trj_x(pre_x.begin(), pre_x.begin()+path_size);
     vectord trj_y(pre_y.begin(), pre_y.begin()+path_size);
@@ -116,7 +156,7 @@ public:
     cur_s += change_lane_interval;
     cur_d = lane*lane_width + lane_width/2 - (lane==2? 0.3: 0);
 
-    for(int i=0; i<10; i++, cur_s += spline_knot_spacing) {
+    for(int i=0; i<20; i++, cur_s += spline_knot_spacing) {
       Map.smooth_cartersian(cur_s, cur_d, x, y, heading);
       trj_x.push_back(x);
       trj_y.push_back(y);
@@ -136,10 +176,6 @@ public:
       local_coord(trj_x[i], trj_y[i]);
       // printf("Point %d: %7.2f, %7.2f\n", i, trj_x[i], trj_y[i]);
     }
-
-    printf("Planned trajectory: ");
-    for(auto&x: trj_x) printf("%7.2f ", x); printf("\n");
-
 
     spline spl;
     spl.set_points(trj_x, trj_y);
@@ -196,7 +232,7 @@ public:
     double j_limit = 50;
     double target_j = 30;
 
-    while(path_x.size() < 20) {
+    while(path_x.size() < 150) {
       double slope = spl.deriv(1, state_x.p);
       double speed = state_x.v*sqrt(1+sqr(slope));
       double curvature = spl.deriv(2,state_x.p)/pow(1+sqr(slope),1.5);
