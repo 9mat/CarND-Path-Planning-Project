@@ -2,10 +2,12 @@
 Path planning usually consists of three main components: _Prediction_, _Behavior planning_ and _Trajectory generation_. For this project, due to simple simulated environment (highway driving) I will simplify away most of the _Prediction_ component, employ a simple heuristics for the _Behavior planning_ and focus on the _Trajectory generation_ component.
 
 # Prediction
-For simplicity, I assume all the other vehicles as travelling at a constant speed with no lane changing. Thus the predicted location of a vehicle will simply be the current position plus the advancement due to the constant velocity of that vehicle. In frenet coordinate, the state evolution is as follows:
+For simplicity, I assume all the other vehicles travelling at constant speed with no lane changing. Thus the predicted location of a vehicle will simply be the current position plus the advancement due to the constant velocity of that vehicle. In frenet coordinate, the state evolution is as follows:
 
+```
 d(t) = d(0)
 s(t) = s(0) + v*t
+```
 
 Due to the simplicity of this prediction model, it will not be implemented explicitly as an independent module or class, but it will be rather incorporated into the calculation of other module.
 
@@ -82,5 +84,5 @@ The Trajectory planning involves 2 stages:
 
 # Results
 
-[![CarND Path-Planning Result Video](http://img.youtube.com/vi/YOUTUBE_VIDEO_ID_HERE/0.jpg)](https://www.youtube.com/watch?v=5LsI5J_MGlI&feature=youtu.be "Result Video")
+[![CarND Path-Planning Result Video](http://img.youtube.com/vi/5LsI5J_MGlI/0.jpg)](https://www.youtube.com/watch?v=5LsI5J_MGlI&feature=youtu.be "Result Video")
 
