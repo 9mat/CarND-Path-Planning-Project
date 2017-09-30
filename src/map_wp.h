@@ -138,7 +138,7 @@ public:
     return wp;
   }
 
-  void frenet(double px, double py, double &ps, double &pd, double &heading) const {
+  void frenet(double px, double py, double &ps, double &pd) const {
     // index of the two nearest way points
     int idx_a = next_wp(px,py);
     int idx_b = dec_wp(idx_a);
@@ -177,21 +177,30 @@ public:
     // to determine if the point is inside or outside of the lane (negative or postive d)
     // compare the distance to the center of the car and of the projection
     if((center-P).norm() < (center-projection).norm()) pd *= -1;
+  }
 
-    heading = atan2(segment_direction(1), segment_direction(0));
+  inline double standardized_frenet(double &ps) const {
+    ps = fmod(ps, total_length);
+    if(ps < 0) ps += total_length;
+    return ps;
+  }
+
+  int next_wp_frenet(double ps) const {
+    ps = standardized_frenet(ps);
+    return (upper_bound(s.begin(), s.end(), ps) - s.begin())%n; 
   }
 
 
-  void cartersian(double ps, double pd, double &px, double &py) const {
-    ps = fmod(ps+total_length, total_length);
 
+  void cartersian(double ps, double pd, double &px, double &py) const {
     // find the segment somewhat contain the point
     // by searching for the first s that exceeds ps
     // given that s is sorted, binary search can be employed
-    int upper_end = (upper_bound(s.begin(), s.end(), ps) - s.begin())%n; 
+    int upper_end = next_wp_frenet(ps); 
     int lower_end = dec_wp(upper_end);
 
     ps -= s[lower_end];
+    ps = standardized_frenet(ps);
 
     // illustratioon
     //    P
@@ -233,8 +242,8 @@ public:
 
   }
 
-  void smooth_cartersian(double ps, double pd, double &px, double &py, double &heading) const {
-    ps = fmod(ps+total_length, total_length);
+  pair<spline, spline> fit_spline_frenet(double ps) const {
+    ps = standardized_frenet(ps);
 
     // find a point close enougth to the car
     int j = (upper_bound(s.begin(), s.end(), ps) - s.begin())%n; 
@@ -248,11 +257,18 @@ public:
     // to be continously linked, but in terms of s, it is discontionous
     // thus, whenever crossing the two ends of the loop we need to adjust s
     // to offset for the length of the loop
+    if(ps < s[j]) ps += total_length;
+
     vector<double> local_x, local_y, local_s;
     for(int i=0; i<=10; i++, j=inc_wp(j)){
       local_x.push_back(x[j]);
       local_y.push_back(y[j]);
-      local_s.push_back(s[j]);
+
+      // translate along s-axis of frenet coordinate, 
+      // so that the point of interest is at the origin of the frenet coordinate
+
+      // make sure s-coord is still continous after the loop
+      local_s.push_back(s[j]-ps); 
       if(i>0 && local_s[i] < local_s[i-1]) {
         local_s[i] += total_length;
       }
@@ -263,17 +279,23 @@ public:
     spline_x.set_points(local_s, local_x);
     spline_y.set_points(local_s, local_y);
 
-    if(ps < local_s[0]) ps += total_length;
+    return make_pair(spline_x, spline_y);
+  }
+
+  void smooth_cartersian(double ps, double pd, double &px, double &py) const {
+    // Spline fitting around ps
+    // the spline fitting will also do translation along frenet axis, so that the point will
+    // correspond to spline(0.0) on the spline
+    pair<spline, spline> spline2d = fit_spline_frenet(ps);
 
     // interpolate to obtain the feet of the projection of car onto lane
-    Eigen::Vector2d projection(spline_x(ps), spline_y(ps));
+    Eigen::Vector2d projection(spline2d.first(0.0), spline2d.second(0.0));
 
-    // tangent of the lane at the projection point is the first derivative at ps
+    // tangent of the lane at the projection point is the first derivative at 0.0
     // aka, tangent = (dspline_x/ds, dspline_y/ds)
     // the normal vector is perpendicular to the tangent vector
     // thus normal = (-dspline_y/ds, dspline_x/ds)
-    double dx = spline_x.deriv(1,ps), dy = spline_y.deriv(1,ps);
-    heading = atan2(dy,dx);
+    double dx = spline2d.first.deriv(1,0.0), dy = spline2d.second.deriv(1,0.0);
 
     Eigen::Vector2d normal(-dy,dx);
 
@@ -292,6 +314,21 @@ public:
     else P = P2;
 
     px = P(0); py = P(1);
+  }
+
+  double heading_frenet(double ps) const {
+    pair<spline, spline> spline2d = fit_spline_frenet(ps);
+    double dx = spline2d.first.deriv(1,0.0);
+    double dy = spline2d.second.deriv(1,0.0);
+    return atan2(dy,dx);
+  }
+
+  double curvature_frenet(double ps) const {
+    // http://mathworld.wolfram.com/Curvature.html
+    pair<spline, spline> spline2d = fit_spline_frenet(ps);
+    double d1x = spline2d.first.deriv(1,0.0), d1y = spline2d.second.deriv(1,0.0);
+    double d2x = spline2d.first.deriv(2,0.0), d2y = spline2d.second.deriv(2,0.0);
+    return (d1x*d2y - d1y*d2x)/pow(sqr(d1x)+sqr(d1y), 1.5);
   }
 
   void standardize(double ref_s, double &s) const {

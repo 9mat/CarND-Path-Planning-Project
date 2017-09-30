@@ -50,12 +50,12 @@ int main() {
   TrajectoryPlanner tplanner;
 
   // State of the car, persistent across multiple planning iterations
+  // These states are used so that we can keep track of the velocity
+  // and acceleration across planning iterations, which help improve
+  // smoothness of the generated trajectory
   State state_x, state_y;
 
-  double timestamp = 0, target_v=0;
-  int count = 0;
-
-  h.onMessage([&count, &Map, &timestamp, &target_v, &bplanner, &tplanner, &state_x, &state_y](uWS::WebSocket<uWS::SERVER> ws, char *data, size_t length,
+  h.onMessage([&Map, &bplanner, &tplanner, &state_x, &state_y](uWS::WebSocket<uWS::SERVER> ws, char *data, size_t length,
                      uWS::OpCode opCode) {
     // "42" at the start of the message means there's a websocket message event.
     // The 4 signifies a websocket message
@@ -89,6 +89,7 @@ int main() {
           // convert from mph to m/s
           car_speed *= 0.44704;
 
+
           // update the states of the car
           state_x.update(car_x);
           state_y.update(car_y);
@@ -96,9 +97,9 @@ int main() {
           state_x.set_v(car_speed*cos(car_yaw));
           state_y.set_v(car_speed*sin(car_yaw));
 
-          double heading = 0, x, y;
+          double x, y;
 
-          Map.smooth_cartersian(car_s, car_d, x, y, heading);
+          Map.smooth_cartersian(car_s, car_d, x, y);
 
         	// Previous path data given to the Planner
         	auto previous_path_x = j[1]["previous_path_x"];
@@ -109,7 +110,6 @@ int main() {
         	double end_path_d = j[1]["end_path_d"];
 
           double dt = 0.02; // 20 ms
-          timestamp += dt;
 
           int path_size = previous_path_x.size();
 
@@ -134,17 +134,18 @@ int main() {
 
 
           // Report car position and previous path information
-          printf("Car @(%7.2f,%7.2f), s=%7.2f, speed = %7.2f\n", car_x, car_y, car_s, car_speed);
-          printf("receive path: \n");
-          for(int i=0; i<pre_x.size(); i++){
-            if(i>0){  
-              double v = distance(pre_x[i], pre_y[i], pre_x[i-1], pre_y[i-1])/dt;
-              printf(" @(%7.2f,%7.2f), v = %7.2f\n", pre_x[i], pre_y[i], v);
-            }
-            else{
-              printf(" @(%7.2f,%7.2f)\n", pre_x[i], pre_y[i]);              
-            }
-          }
+          int car_lane = int(floor(car_d/4));
+          printf("Car @(%7.2f,%7.2f), lane %d, s= %7.2f, speed= %5.2f\n", car_x, car_y, car_lane, car_s, car_speed);
+          // printf("receive path: \n");
+          // for(int i=0; i<pre_x.size(); i++){
+          //   if(i>0){  
+          //     double v = distance(pre_x[i], pre_y[i], pre_x[i-1], pre_y[i-1])/dt;
+          //     printf(" @(%7.2f,%7.2f), v = %7.2f\n", pre_x[i], pre_y[i], v);
+          //   }
+          //   else{
+          //     printf(" @(%7.2f,%7.2f)\n", pre_x[i], pre_y[i]);              
+          //   }
+          // }
 
           // If no previous, use the car car position to indicate the starting point of the future path
           if(path_size < 1){
@@ -166,8 +167,6 @@ int main() {
         	msgJson["next_y"] = next_path.second;
 
         	auto msg = "42[\"control\","+ msgJson.dump()+"]";
-
-          printf("Finish at timestamp %7.2g\n", timestamp);
 
         	//this_thread::sleep_for(chrono::milliseconds(1000));
         	ws.send(msg.data(), msg.length(), uWS::OpCode::TEXT);
